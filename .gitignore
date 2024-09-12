@@ -30,3 +30,16 @@
 *.exe
 *.out
 *.app
+
+#images 
+*.png
+
+# build files
+build/
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+
+#.ds_store
+.DS_Store
