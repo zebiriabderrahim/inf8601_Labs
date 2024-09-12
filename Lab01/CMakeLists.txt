@@ -4,18 +4,10 @@ project(tp1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "-fno-rtti")
 
-# Find the PNG package
-find_package(PNG REQUIRED)
+include_directories(include)
 
-# Find TBB package
-find_package(TBB REQUIRED)
-
-# Include directories
-include_directories(include ${PNG_INCLUDE_DIRS} ${TBB_INCLUDE_DIRS})
-
-# Add executable for pipeline
 add_executable(pipeline)
-target_link_libraries(pipeline -lm -pthread ${TBB_LIBRARIES} ${PNG_LIBRARIES})
+target_link_libraries(pipeline -lm -pthread -lpng -ltbb)
 target_sources(pipeline PUBLIC
     source/filter.c
     source/image.c
@@ -28,9 +20,8 @@ target_sources(pipeline PUBLIC
 # For macros with __FILE__
 target_compile_options(pipeline PUBLIC "-fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=")
 
-# Add executable for pipeline-notbb
 add_executable(pipeline-notbb)
-target_link_libraries(pipeline-notbb -lm -pthread ${PNG_LIBRARIES})
+target_link_libraries(pipeline-notbb -lm -pthread -lpng)
 target_sources(pipeline-notbb PUBLIC
     source/filter.c
     source/image.c
@@ -43,29 +34,29 @@ target_sources(pipeline-notbb PUBLIC
 target_compile_options(pipeline-notbb PUBLIC "-fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=")
 
 if (DEFINED CLANG_INCLUDE_DIR)
-    add_executable(source-checker
-        matcher/main.cpp
-        matcher/matchers.cpp
-    )
+add_executable(source-checker
+    matcher/main.cpp
+    matcher/matchers.cpp
+)
 
-    target_link_libraries(source-checker
-        clangTooling
-        clangFrontend
-        clangSerialization
-        clangDriver
-        clangRewriteFrontend
-        clangRewrite
-        clangParse
-        clangSema
-        clangAnalysis
-        clangAST
-        clangASTMatchers
-        clangEdit
-        clangLex
-        clangBasic
-        LLVMSupport
-        LLVMFrontendOpenMP
-    )
+target_link_libraries(source-checker
+    clangTooling
+    clangFrontend
+    clangSerialization
+    clangDriver
+    clangRewriteFrontend
+    clangRewrite
+    clangParse
+    clangSema
+    clangAnalysis
+    clangAST
+    clangASTMatchers
+    clangEdit
+    clangLex
+    clangBasic
+    LLVMSupport
+    LLVMFrontendOpenMP
+)
 endif()
 
 add_custom_target(format
@@ -108,14 +99,14 @@ add_custom_target(generate-image
 )
 
 if (DEFINED CLANG_INCLUDE_DIR)
-    add_custom_target(check-source
-      COMMAND ${CMAKE_CURRENT_BINARY_DIR}/source-checker
-      ${PROJECT_SOURCE_DIR}/source/pipeline-tbb.cpp
-      --extra-arg=-I${CLANG_INCLUDE_DIR}
-      -p ${CMAKE_CURRENT_BINARY_DIR}/compile_commands.json
-      -v ${VARIANT}
-    )
-    add_dependencies(check-source source-checker)
+add_custom_target(check-source
+  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/source-checker
+  ${PROJECT_SOURCE_DIR}/source/pipeline-tbb.cpp
+  --extra-arg=-I${CLANG_INCLUDE_DIR}
+  -p ${CMAKE_CURRENT_BINARY_DIR}/compile_commands.json
+  -v ${VARIANT}
+)
+add_dependencies(check-source source-checker)
 endif()
 
 add_custom_target(check
@@ -126,9 +117,9 @@ add_custom_target(check
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 if (DEFINED CLANG_INCLUDE_DIR)
-    add_dependencies(check check-source generate-image)
+add_dependencies(check check-source generate-image)
 else()
-    add_dependencies(check generate-image)
+add_dependencies(check generate-image)
 endif()
 
 install(TARGETS pipeline pipeline-notbb)
