@@ -9,9 +9,9 @@
 extern "C" {
 #endif /* __cplusplus */
 
-int pipeline_serial(image_dir_t* image_dir);
-int pipeline_pthread(image_dir_t* image_dir);
-int pipeline_tbb(image_dir_t* image_dir);
+int pipeline_serial(image_dir_t *image_dir);
+int pipeline_pthread(image_dir_t *image_dir);
+int pipeline_tbb(image_dir_t *image_dir);
 
 #ifdef __cplusplus
 } /* extern "C" */

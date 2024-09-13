@@ -7,7 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define LOG_ERROR(msg, args...) fprintf(stderr, "%s@%d: " msg "\n", __FILE__, __LINE__, ##args)
+#define LOG_ERROR(msg, args...)                                                \
+  fprintf(stderr, "%s@%d: " msg "\n", __FILE__, __LINE__, ##args)
 #define LOG_ERROR_ERRNO(msg) LOG_ERROR("%s (%s)", msg, strerror(errno))
 #define LOG_ERROR_NULL_PTR(...) LOG_ERROR("NULL pointer received")
 
