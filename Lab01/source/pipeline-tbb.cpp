@@ -1,5 +1,7 @@
 #include "tbb/pipeline.h"
 #include <stdio.h>
+#include <unistd.h>
+
 
 extern "C" {
 #include "filter.h"
@@ -67,10 +69,18 @@ public:
     fflush(stdout);
   }
 };
+int calculate_optimal_threads_num(long num_cores) {
+  int optimal_threads = (num_cores * 8) / 4;
+  return (optimal_threads < 2)    ? 2
+         : (optimal_threads > 27) ? 27
+                                  : optimal_threads;
+}
 
 int pipeline_tbb(image_dir_t *image_dir) {
+  long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+  const int NUM_THREADS = calculate_optimal_threads_num(num_cores);
   tbb::parallel_pipeline(
-      16, tbb::make_filter<void, image_t *>(tbb::filter::serial,
+      NUM_THREADS, tbb::make_filter<void, image_t *>(tbb::filter::serial,
                                             TBBLoadNext(image_dir)) &
               tbb::make_filter<image_t *, image_t *>(tbb::filter::parallel,
                                                      TBBScaleUp()) &

@@ -31,7 +31,7 @@ struct save_args {
 };
 
 int calculate_optimal_threads_num(long num_cores) {
-  int optimal_threads = (num_cores * 12) / 4;
+  int optimal_threads = (num_cores * 8) / 4;
   return (optimal_threads < 2)    ? 2
          : (optimal_threads > 27) ? 27
                                   : optimal_threads;
