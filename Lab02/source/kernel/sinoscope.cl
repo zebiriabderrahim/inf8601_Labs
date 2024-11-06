@@ -17,17 +17,12 @@ typedef struct __attribute__((packed)) sinoscope_args {
     float dy;
 } sinoscope_args_t;
 
-__kernel void sinoscope_kernel(
-    __global unsigned char* buffer,  // Shared buffer as first parameter 
-    sinoscope_args_t args) {        // Structure as second parameter
-    
+__kernel void sinoscope_kernel(__global unsigned char* buffer, sinoscope_args_t args) {
     const int id = get_global_id(0);
     const int total_pixels = args.width * args.height;
     
-    // Skip if we're beyond the image dimensions
     if (id >= total_pixels) return;
 
-    // Calculate i and j from the 1D index
     int i = id / args.height;
     int j = id % args.height;
     
@@ -46,7 +41,7 @@ __kernel void sinoscope_kernel(
     pixel_t pixel;
     color_value(&pixel, value, args.interval, args.interval_inverse);
 
-    int index = (j * 3) + (i * 3) * args.width;
+    int index = (i * 3) + (j * 3) * args.width;
     buffer[index + 0] = pixel.bytes[0];
     buffer[index + 1] = pixel.bytes[1];
     buffer[index + 2] = pixel.bytes[2];
