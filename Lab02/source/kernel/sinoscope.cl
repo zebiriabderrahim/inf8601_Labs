@@ -28,8 +28,8 @@ __kernel void sinoscope_kernel(
     if (id >= total_pixels) return;
 
     // Calculate i and j from the 1D index
-    int j = id / args.width;
-    int i = id % args.width;
+    int i = id / args.height;
+    int j = id % args.height;
     
     float px = args.dx * j - 2 * M_PI;
     float py = args.dy * i - 2 * M_PI;
@@ -46,7 +46,7 @@ __kernel void sinoscope_kernel(
     pixel_t pixel;
     color_value(&pixel, value, args.interval, args.interval_inverse);
 
-    int index = (i * 3) + (j * 3) * args.width;
+    int index = (j * 3) + (i * 3) * args.width;
     buffer[index + 0] = pixel.bytes[0];
     buffer[index + 1] = pixel.bytes[1];
     buffer[index + 2] = pixel.bytes[2];
