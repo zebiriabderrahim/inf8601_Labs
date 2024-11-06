@@ -31,7 +31,7 @@ int sinoscope_image_openmp(sinoscope_t* sinoscope) {
             pixel_t pixel;
             color_value(&pixel, value, sinoscope->interval, sinoscope->interval_inverse);
 
-            int index = (j * 3) + (i * 3) * sinoscope->width;
+            int index = (i * 3) + (j * 3) * sinoscope->width;
 
             sinoscope->buffer[index + 0] = pixel.bytes[0];
             sinoscope->buffer[index + 1] = pixel.bytes[1];
