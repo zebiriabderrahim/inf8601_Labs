@@ -19,8 +19,7 @@ typedef struct __attribute__((packed)) sinoscope_args {
     cl_float dy;
 } sinoscope_args_t;
 
-int sinoscope_opencl_init(sinoscope_opencl_t* opencl, cl_device_id opencl_device_id, 
-                         unsigned int width, unsigned int height) {
+int sinoscope_opencl_init(sinoscope_opencl_t* opencl, cl_device_id opencl_device_id, unsigned int width, unsigned int height) {
     if (opencl == NULL) {
         LOG_ERROR_NULL_PTR();
         return -1;
@@ -29,30 +28,24 @@ int sinoscope_opencl_init(sinoscope_opencl_t* opencl, cl_device_id opencl_device
     cl_int error = CL_SUCCESS;
     opencl->device_id = opencl_device_id;
 
-    // Create context
     opencl->context = clCreateContext(0, 1, &opencl_device_id, NULL, NULL, &error);
     if (error != CL_SUCCESS) {
         LOG_ERROR("Error creating context: %i\n", (int)error);
         goto cleanup;
     }
 
-    // Create command queue
     opencl->queue = clCreateCommandQueue(opencl->context, opencl_device_id, 0, &error);
     if (error != CL_SUCCESS) {
         LOG_ERROR("Error creating command queue: %i\n", (int)error);
         goto cleanup;
     }
 
-    // Create buffer
-    opencl->buffer = clCreateBuffer(opencl->context, 
-        CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, 
-        width * height * 3, NULL, &error);
+    opencl->buffer = clCreateBuffer(opencl->context, CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, width * height * 3, NULL, &error);
     if (error != CL_SUCCESS) {
         LOG_ERROR("Error creating buffer: %i\n", (int)error);
         goto cleanup;
     }
 
-    // Load and build kernel
     size_t size = 0;
     char* code = NULL;
     opencl_load_kernel_code(&code, &size);
@@ -61,26 +54,22 @@ int sinoscope_opencl_init(sinoscope_opencl_t* opencl, cl_device_id opencl_device
         goto cleanup;
     }
 
-    cl_program program = clCreateProgramWithSource(opencl->context, 1, 
-                                                 (const char**)&code, &size, &error);
+    cl_program program = clCreateProgramWithSource(opencl->context, 1, (const char**)&code, &size, &error);
     if (error != CL_SUCCESS) {
         LOG_ERROR("Error creating program: %i\n", (int)error);
         free(code);
         goto cleanup;
     }
 
-    error = clBuildProgram(program, 1, &opencl->device_id, 
-                          "-I " __OPENCL_INCLUDE__, NULL, NULL);
+    error = clBuildProgram(program, 1, &opencl->device_id, "-I " __OPENCL_INCLUDE__, NULL, NULL);
     if (error != CL_SUCCESS) {
         size_t log_size = 0;
-        clGetProgramBuildInfo(program, opencl->device_id, 
-                            CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+        clGetProgramBuildInfo(program, opencl->device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
         
         char* log = malloc(log_size + 1);
         log[log_size] = '\0';
 
-        clGetProgramBuildInfo(program, opencl->device_id, 
-                            CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+        clGetProgramBuildInfo(program, opencl->device_id, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
         LOG_ERROR("Build error: %s\n", log);
         free(log);
         free(code);
@@ -119,7 +108,6 @@ int sinoscope_image_opencl(sinoscope_t* sinoscope) {
 
     cl_int error = CL_SUCCESS;
 
-    // Set buffer as first argument
     error = clSetKernelArg(sinoscope->opencl->kernel, 0, sizeof(cl_mem), 
                           &(sinoscope->opencl->buffer));
     if (error != CL_SUCCESS) {
@@ -144,17 +132,14 @@ int sinoscope_image_opencl(sinoscope_t* sinoscope) {
         sinoscope->dy
     };
 
-    // Set structure as second argument
     error = clSetKernelArg(sinoscope->opencl->kernel, 1, sizeof(args), &args);
     if (error != CL_SUCCESS) {
         LOG_ERROR("Error setting args struct: %i\n", (int)error);
         return -1;
     }
 
-    // Set work size for 1D distribution
     const size_t global_work_size = sinoscope->width * sinoscope->height;
 
-    // Execute kernel
     error = clEnqueueNDRangeKernel(sinoscope->opencl->queue, 
                                   sinoscope->opencl->kernel,
                                   1, NULL, &global_work_size, 
@@ -164,7 +149,6 @@ int sinoscope_image_opencl(sinoscope_t* sinoscope) {
         return -1;
     }
 
-    // Read results
     error = clEnqueueReadBuffer(sinoscope->opencl->queue, 
                               sinoscope->opencl->buffer, CL_TRUE,
                               0, sinoscope->buffer_size, 
