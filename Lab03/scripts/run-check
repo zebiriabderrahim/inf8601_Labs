@@ -22,4 +22,4 @@ $mpi -n 16 "$heatsim" --dim-x 4 --dim-y 4 --input ./images/earth-medium.png --it
 echo "Running check N=32: 8x4"
 $mpi -n 32 "$heatsim" --dim-x 8 --dim-y 4 --input ./images/earth-medium.png --iterations 10 --output ./images/check32.png
 
-sha256sum --check ./images/check1.checksum ./images/check10.checksum ./images/check16.checksum ./images/check32.checksum
+shasum -a 256  --check ./images/check1.checksum ./images/check10.checksum ./images/check16.checksum ./images/check32.checksum
