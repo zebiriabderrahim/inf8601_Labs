@@ -7,7 +7,6 @@ int heatsim_init(heatsim_t* heatsim, unsigned int dim_x, unsigned int dim_y) {
     int periods[2] = {1, 1};  // Periodic in both dimensions
     int dims[2] = {dim_x, dim_y};
 
-    // Initialize MPI cartesian topology
     MPI_Comm_size(MPI_COMM_WORLD, &heatsim->rank_count);
     MPI_Comm_rank(MPI_COMM_WORLD, &heatsim->rank);
 
@@ -40,31 +39,62 @@ int heatsim_send_grids(heatsim_t* heatsim, cart2d_t* cart) {
      *       Utilisez `cart2d_get_grid` pour obtenir la `grid` à une coordonnée.
      */
 
+    // If only one rank, no need to send anything
+    if (heatsim->rank_count == 1) {
+        return 0;
+    }
+
+    typedef struct {
+        unsigned int width;
+        unsigned int height;
+        unsigned int padding;
+    } GridParams;
+
+    MPI_Datatype param_type;
+    int blocklengths[] = {1, 1, 1};
+    MPI_Aint offsets[3];
+    MPI_Datatype types[] = {MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED};
+
+    GridParams params;
+    MPI_Get_address(&params.width, &offsets[0]);
+    MPI_Get_address(&params.height, &offsets[1]);
+    MPI_Get_address(&params.padding, &offsets[2]);
+
+    MPI_Aint base;
+    MPI_Get_address(&params, &base);
+    for(int i = 0; i < 3; i++) {
+        offsets[i] = MPI_Aint_diff(offsets[i], base);
+    }
+
+    MPI_Type_create_struct(3, blocklengths, offsets, types, &param_type);
+    MPI_Type_commit(&param_type);
+
     MPI_Request requests[3 * heatsim->rank_count];
     int request_count = 0;
 
     for (int y = 0; y < cart->grid_y_count; y++) {
         for (int x = 0; x < cart->grid_x_count; x++) {
             if (y == heatsim->coordinates[1] && x == heatsim->coordinates[0])
-                continue;  // Skip self
+                continue; // Skip self
 
             grid_t* grid = cart2d_get_grid(cart, x, y);
             int dest_rank;
             MPI_Cart_rank(heatsim->communicator, (int[2]){x, y}, &dest_rank);
 
-            // Send dimensions
-            MPI_Isend(&grid->width, 1, MPI_UNSIGNED, dest_rank, 0,
-                      heatsim->communicator, &requests[request_count++]);
-            MPI_Isend(&grid->height, 1, MPI_UNSIGNED, dest_rank, 1,
-                      heatsim->communicator, &requests[request_count++]);
+            params.width = grid->width;
+            params.height = grid->height;
+            params.padding = grid->padding;
 
-            // Send grid data
+            MPI_Isend(&params, 1, param_type, dest_rank, 0,
+                      heatsim->communicator, &requests[request_count++]);
             MPI_Isend(grid->data, grid->width * grid->height, MPI_DOUBLE,
-                      dest_rank, 2, heatsim->communicator, &requests[request_count++]);
+                      dest_rank, 1, heatsim->communicator, &requests[request_count++]);
         }
     }
 
     MPI_Waitall(request_count, requests, MPI_STATUSES_IGNORE);
+
+    MPI_Type_free(&param_type);
     return 0;
 }
 
@@ -77,21 +107,40 @@ grid_t* heatsim_receive_grid(heatsim_t* heatsim) {
     *
     *       Utilisez `grid_create` pour allouer le `grid` à retourner.
     */
+    typedef struct {
+        unsigned int width;
+        unsigned int height;
+        unsigned int padding;
+    } GridParams;
 
-    unsigned int width, height;
+    MPI_Datatype param_type;
+    int blocklengths[] = {1, 1, 1};
+    MPI_Aint offsets[3];
+    MPI_Datatype types[] = {MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED};
 
-    // Receive dimensions
-    MPI_Recv(&width, 1, MPI_UNSIGNED, 0, 0, heatsim->communicator, MPI_STATUS_IGNORE);
-    MPI_Recv(&height, 1, MPI_UNSIGNED, 0, 1, heatsim->communicator, MPI_STATUS_IGNORE);
+    GridParams params;
+    MPI_Get_address(&params.width, &offsets[0]);
+    MPI_Get_address(&params.height, &offsets[1]);
+    MPI_Get_address(&params.padding, &offsets[2]);
 
-    // Create grid
-    grid_t* grid = grid_create(width, height, 0);
+    MPI_Aint base;
+    MPI_Get_address(&params, &base);
+    for(int i = 0; i < 3; i++) {
+        offsets[i] = MPI_Aint_diff(offsets[i], base);
+    }
+
+    MPI_Type_create_struct(3, blocklengths, offsets, types, &param_type);
+    MPI_Type_commit(&param_type);
+
+    MPI_Recv(&params, 1, param_type, 0, 0, heatsim->communicator, MPI_STATUS_IGNORE);
+
+    grid_t* grid = grid_create(params.width, params.height, params.padding);
     if (!grid) return NULL;
 
-    // Receive data
-    MPI_Recv(grid->data, width * height, MPI_DOUBLE, 0, 2,
-             heatsim->communicator, MPI_STATUS_IGNORE);
+    MPI_Recv(grid->data, params.width * params.height, MPI_DOUBLE,
+             0, 1, heatsim->communicator, MPI_STATUS_IGNORE);
 
+    MPI_Type_free(&param_type);
     return grid;
 }
 
@@ -141,40 +190,83 @@ int heatsim_exchange_borders(heatsim_t* heatsim, grid_t* grid) {
      *       Utilisez `grid_get_cell` pour obtenir un pointeur vers une cellule.
      */
 
-    MPI_Datatype row_type, col_type;
-    // Create row datatype
+    if (heatsim->rank_count == 1) {
+        // Copier la bordure nord dans le padding sud
+        memcpy(grid_get_cell(grid, 0, -1), grid_get_cell(grid, 0, grid->height-1), grid->width * sizeof(double));
+        // Copier la bordure sud dans le padding nord
+        memcpy(grid_get_cell(grid, 0, grid->height), grid_get_cell(grid, 0, 0), grid->width * sizeof(double));
+        // Copier la bordure est dans le padding ouest
+        for (int y = 0; y < grid->height; y++)  *grid_get_cell(grid, -1, y) = *grid_get_cell(grid, grid->width-1, y);
+        // Copier la bordure ouest dans le padding est
+        for (int y = 0; y < grid->height; y++) *grid_get_cell(grid, grid->width, y) = *grid_get_cell(grid, 0, y);
+
+        return 0;
+    }
+
+    // Create row datatype for north/south borders
+    MPI_Datatype row_type;
     MPI_Type_contiguous(grid->width, MPI_DOUBLE, &row_type);
     MPI_Type_commit(&row_type);
 
-    // Create column datatype
+    // Create column datatype for east/west borders
+    MPI_Datatype col_type;
     MPI_Type_vector(grid->height, 1, grid->width_padded, MPI_DOUBLE, &col_type);
     MPI_Type_commit(&col_type);
 
-    // Exchange with north/south neighbors
-    MPI_Sendrecv(grid_get_cell(grid, 0, 0), 1, row_type,
-                 heatsim->rank_south_peer, 0,
-                 grid_get_cell(grid, 0, grid->height), 1, row_type,
-                 heatsim->rank_north_peer, 0,
-                 heatsim->communicator, MPI_STATUS_IGNORE);
 
-    MPI_Sendrecv(grid_get_cell(grid, 0, grid->height-1), 1, row_type,
-                 heatsim->rank_north_peer, 1,
-                 grid_get_cell(grid, 0, -1), 1, row_type,
-                 heatsim->rank_south_peer, 1,
-                 heatsim->communicator, MPI_STATUS_IGNORE);
+    // Round-robin communication
+    for (int phase = 0; phase < 4; phase++) {
+        // Determine direction based on phase
+        switch (phase) {
+            case 0: // North-South phase 1
+                if (heatsim->rank < heatsim->rank_north_peer) {
+                    // Send north, then receive from south
+                    MPI_Send(grid_get_cell(grid, 0, grid->height-1), 1, row_type, heatsim->rank_north_peer, 0, heatsim->communicator);
+                    MPI_Recv(grid_get_cell(grid, 0, -1), 1, row_type, heatsim->rank_south_peer, 0, heatsim->communicator, MPI_STATUS_IGNORE);
+                } else {
+                    // Receive from south, then send north
+                    MPI_Recv(grid_get_cell(grid, 0, -1), 1, row_type, heatsim->rank_south_peer, 0, heatsim->communicator, MPI_STATUS_IGNORE);
+                    MPI_Send(grid_get_cell(grid, 0, grid->height-1), 1, row_type, heatsim->rank_north_peer, 0, heatsim->communicator);
+                }
+                break;
 
-    // Exchange with east/west neighbors
-    MPI_Sendrecv(grid_get_cell(grid, 0, 0), 1, col_type,
-                 heatsim->rank_west_peer, 2,
-                 grid_get_cell(grid, grid->width, 0), 1, col_type,
-                 heatsim->rank_east_peer, 2,
-                 heatsim->communicator, MPI_STATUS_IGNORE);
+            case 1: // South-North phase
+                if (heatsim->rank < heatsim->rank_south_peer) {
+                    // Send south, then receive from north
+                    MPI_Send(grid_get_cell(grid, 0, 0), 1, row_type, heatsim->rank_south_peer, 1, heatsim->communicator);
+                    MPI_Recv(grid_get_cell(grid, 0, grid->height), 1, row_type, heatsim->rank_north_peer, 1, heatsim->communicator, MPI_STATUS_IGNORE);
+                } else {
+                    // Receive from north, then send south
+                    MPI_Recv(grid_get_cell(grid, 0, grid->height), 1, row_type, heatsim->rank_north_peer, 1, heatsim->communicator, MPI_STATUS_IGNORE);
+                    MPI_Send(grid_get_cell(grid, 0, 0), 1, row_type, heatsim->rank_south_peer, 1, heatsim->communicator);
+                }
+                break;
 
-    MPI_Sendrecv(grid_get_cell(grid, grid->width-1, 0), 1, col_type,
-                 heatsim->rank_east_peer, 3,
-                 grid_get_cell(grid, -1, 0), 1, col_type,
-                 heatsim->rank_west_peer, 3,
-                 heatsim->communicator, MPI_STATUS_IGNORE);
+            case 2: // East-West phase
+                if (heatsim->rank < heatsim->rank_east_peer) {
+                    // Send east, then receive from west
+                    MPI_Send(grid_get_cell(grid, grid->width-1, 0), 1, col_type, heatsim->rank_east_peer, 2, heatsim->communicator);
+                    MPI_Recv(grid_get_cell(grid, -1, 0), 1, col_type, heatsim->rank_west_peer, 2, heatsim->communicator, MPI_STATUS_IGNORE);
+                } else {
+                    // Receive from west, then send east
+                    MPI_Recv(grid_get_cell(grid, -1, 0), 1, col_type, heatsim->rank_west_peer, 2, heatsim->communicator, MPI_STATUS_IGNORE);
+                    MPI_Send(grid_get_cell(grid, grid->width-1, 0), 1, col_type, heatsim->rank_east_peer, 2, heatsim->communicator);
+                }
+                break;
+
+            case 3: // West-East phase
+                if (heatsim->rank < heatsim->rank_west_peer) {
+                    // Send west, then receive from east
+                    MPI_Send(grid_get_cell(grid, 0, 0), 1, col_type, heatsim->rank_west_peer, 3, heatsim->communicator);
+                    MPI_Recv(grid_get_cell(grid, grid->width, 0), 1, col_type, heatsim->rank_east_peer, 3, heatsim->communicator, MPI_STATUS_IGNORE);
+                } else {
+                    // Receive from east, then send west
+                    MPI_Recv(grid_get_cell(grid, grid->width, 0), 1, col_type,heatsim->rank_east_peer, 3, heatsim->communicator, MPI_STATUS_IGNORE);
+                    MPI_Send(grid_get_cell(grid, 0, 0), 1, col_type, heatsim->rank_west_peer, 3, heatsim->communicator);
+                }
+                break;
+        }
+    }
 
     MPI_Type_free(&row_type);
     MPI_Type_free(&col_type);
@@ -182,15 +274,14 @@ int heatsim_exchange_borders(heatsim_t* heatsim, grid_t* grid) {
     return 0;
 }
 
+
 int heatsim_send_result(heatsim_t* heatsim, grid_t* grid) {
     assert(grid->padding == 0);
-
     /*
      * TODO: Envoyer les données (`data`) du `grid` résultant au rang 0. Le
      *       `grid` n'a aucun rembourage (padding = 0);
      */
-    return MPI_Send(grid->data, grid->width * grid->height, MPI_DOUBLE,
-                    0, 0, heatsim->communicator);
+    return MPI_Send(grid->data, grid->width * grid->height, MPI_DOUBLE, 0, 0, heatsim->communicator);
 }
 
 int heatsim_receive_results(heatsim_t* heatsim, cart2d_t* cart) {
@@ -209,9 +300,7 @@ int heatsim_receive_results(heatsim_t* heatsim, cart2d_t* cart) {
             grid_t* grid = cart2d_get_grid(cart, x, y);
             int src_rank;
             MPI_Cart_rank(heatsim->communicator, (int[2]){x, y}, &src_rank);
-
-            MPI_Recv(grid->data, grid->width * grid->height, MPI_DOUBLE,
-                     src_rank, 0, heatsim->communicator, MPI_STATUS_IGNORE);
+            MPI_Recv(grid->data, grid->width * grid->height, MPI_DOUBLE, src_rank, 0, heatsim->communicator, MPI_STATUS_IGNORE);
         }
     }
     return 0;
