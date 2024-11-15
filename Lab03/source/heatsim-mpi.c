@@ -39,7 +39,6 @@ int heatsim_send_grids(heatsim_t* heatsim, cart2d_t* cart) {
      *       Utilisez `cart2d_get_grid` pour obtenir la `grid` à une coordonnée.
      */
 
-    // If only one rank, no need to send anything
     if (heatsim->rank_count == 1) {
         return 0;
     }
@@ -50,50 +49,82 @@ int heatsim_send_grids(heatsim_t* heatsim, cart2d_t* cart) {
         unsigned int padding;
     } GridParams;
 
+    // Initialize params structure
+    GridParams params = {0, 0, 0};
+
+    // Create MPI datatype for GridParams
     MPI_Datatype param_type;
     int blocklengths[] = {1, 1, 1};
     MPI_Aint offsets[3];
     MPI_Datatype types[] = {MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED};
 
-    GridParams params;
+    // Get addresses after initialization
+    MPI_Aint base;
+    MPI_Get_address(&params, &base);
     MPI_Get_address(&params.width, &offsets[0]);
     MPI_Get_address(&params.height, &offsets[1]);
     MPI_Get_address(&params.padding, &offsets[2]);
 
-    MPI_Aint base;
-    MPI_Get_address(&params, &base);
+    // Calculate relative offsets
     for(int i = 0; i < 3; i++) {
         offsets[i] = MPI_Aint_diff(offsets[i], base);
     }
 
+    // Create and commit the datatype
     MPI_Type_create_struct(3, blocklengths, offsets, types, &param_type);
     MPI_Type_commit(&param_type);
 
-    MPI_Request requests[3 * heatsim->rank_count];
+    // Calculate maximum number of requests needed
+    int max_requests = 2 * (heatsim->rank_count - 1); // 2 requests per rank (params and data)
+    MPI_Request* requests = malloc(max_requests * sizeof(MPI_Request));
+    if (!requests) {
+        MPI_Type_free(&param_type);
+        return -1;
+    }
+
     int request_count = 0;
 
+    // Send grids to all other ranks
     for (int y = 0; y < cart->grid_y_count; y++) {
         for (int x = 0; x < cart->grid_x_count; x++) {
-            if (y == heatsim->coordinates[1] && x == heatsim->coordinates[0])
+            if (y == heatsim->coordinates[1] && x == heatsim->coordinates[0]) {
                 continue; // Skip self
+            }
 
             grid_t* grid = cart2d_get_grid(cart, x, y);
             int dest_rank;
             MPI_Cart_rank(heatsim->communicator, (int[2]){x, y}, &dest_rank);
 
+            // Set parameters for current grid
             params.width = grid->width;
             params.height = grid->height;
             params.padding = grid->padding;
 
+            // Send parameters
             MPI_Isend(&params, 1, param_type, dest_rank, 0,
                       heatsim->communicator, &requests[request_count++]);
+
+            // Send grid data
             MPI_Isend(grid->data, grid->width * grid->height, MPI_DOUBLE,
                       dest_rank, 1, heatsim->communicator, &requests[request_count++]);
         }
     }
 
-    MPI_Waitall(request_count, requests, MPI_STATUSES_IGNORE);
+    // Wait for all communications to complete if there are any
+    if (request_count > 0) {
+        // Wait for each request individually
+        for (int i = 0; i < request_count; i++) {
+            int err = MPI_Wait(&requests[i], MPI_STATUS_IGNORE);
+            if (err != MPI_SUCCESS) {
+                free(requests);
+                MPI_Type_free(&param_type);
+                return err;
+            }
+        }
+    }
 
+    // Cleanup
+    free(requests);
     MPI_Type_free(&param_type);
     return 0;
 }
@@ -113,33 +144,54 @@ grid_t* heatsim_receive_grid(heatsim_t* heatsim) {
         unsigned int padding;
     } GridParams;
 
+    // Initialize params structure to avoid warning
+    GridParams params = {0, 0, 0};
+
+    // Create MPI datatype for GridParams
     MPI_Datatype param_type;
     int blocklengths[] = {1, 1, 1};
     MPI_Aint offsets[3];
     MPI_Datatype types[] = {MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED};
 
-    GridParams params;
+    // Get addresses after initialization
+    MPI_Aint base;
+    MPI_Get_address(&params, &base);
     MPI_Get_address(&params.width, &offsets[0]);
     MPI_Get_address(&params.height, &offsets[1]);
     MPI_Get_address(&params.padding, &offsets[2]);
 
-    MPI_Aint base;
-    MPI_Get_address(&params, &base);
+    // Calculate relative offsets
     for(int i = 0; i < 3; i++) {
         offsets[i] = MPI_Aint_diff(offsets[i], base);
     }
 
+    // Create and commit the datatype
     MPI_Type_create_struct(3, blocklengths, offsets, types, &param_type);
     MPI_Type_commit(&param_type);
 
-    MPI_Recv(&params, 1, param_type, 0, 0, heatsim->communicator, MPI_STATUS_IGNORE);
+    // Post non-blocking receive for parameters
+    MPI_Request param_request;
+    MPI_Irecv(&params, 1, param_type, 0, 0, heatsim->communicator, &param_request);
 
+    // Wait for parameters to be received
+    MPI_Wait(&param_request, MPI_STATUS_IGNORE);
+
+    // Create grid with received parameters
     grid_t* grid = grid_create(params.width, params.height, params.padding);
-    if (!grid) return NULL;
+    if (!grid) {
+        MPI_Type_free(&param_type);
+        return NULL;
+    }
 
-    MPI_Recv(grid->data, params.width * params.height, MPI_DOUBLE,
-             0, 1, heatsim->communicator, MPI_STATUS_IGNORE);
+    // Post non-blocking receive for grid data
+    MPI_Request data_request;
+    MPI_Irecv(grid->data, params.width * params.height, MPI_DOUBLE,
+              0, 1, heatsim->communicator, &data_request);
 
+    // Wait for grid data to be received
+    MPI_Wait(&data_request, MPI_STATUS_IGNORE);
+
+    // Cleanup
     MPI_Type_free(&param_type);
     return grid;
 }
